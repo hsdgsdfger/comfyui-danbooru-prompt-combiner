@@ -1,0 +1,197 @@
+# 非商业 Copyleft 许可协议 · 第 1.0 版
+
+**Non-Commercial Copyleft License v1.0**
+
+版权所有 (c) 2026
+
+- **原作者**：咖喱给给咖喱给给给（哔哩哔哩 UID 404690009）
+  https://space.bilibili.com/404690009
+- **二次开发者**：本仓库（https://github.com/hsdgsdfger/danbooru-）的贡献者
+
+---
+
+## 前言
+
+本协议的目的是：**让所有人都能免费使用和修改本项目，同时防止有人拿它去赚钱，并确保所有改进都回流到社区。**
+
+因此本协议同时具备两个特征：
+
+1. **非商业（Non-Commercial）** —— 禁止任何商业性使用；
+2. **Copyleft（相同方式共享）** —— 衍生作品必须以相同协议开源。
+
+> ⚠️ 请注意：由于限制商业使用，本协议**不属于** OSI（开放源代码促进会）或 FSF（自由软件基金会）定义的「开源许可证」，在法律分类上属于 **source-available（源码可用）** 许可。
+> 本协议在结构上参考了 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh) 与 [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html) 的部分条款，但为软件与数据集场景做了调整。
+
+---
+
+## 第一条 · 定义
+
+**1.1 「本作品」**
+指本协议附随的全部内容，包括但不限于：源代码（`*.py`、`*.js`）、词库数据（`dictionary.json`、`slot_idx.json`、`rules.json`、`user_edits.json` 等）、规则表、文档、以及任何随附的配置文件。
+
+**1.2 「衍生作品」**
+指基于本作品全部或实质性部分所形成的任何作品，包括但不限于：修改版、fork 分支、二次开发版本、将本作品整体或部分嵌入其他软件、将词库改造为其他格式后发布、基于本作品提供网络服务。
+
+**1.3 「商业性使用」**
+指以获取直接或间接经济利益为目的的使用，包括但不限于：
+
+- 销售、出租、许可本作品或衍生作品；
+- 将本作品集成进付费软件、付费插件、付费订阅服务；
+- 以本作品为基础提供收费的部署、代配置、代训练、代生成服务；
+- 在付费课程、付费教程、付费社群中作为核心卖点分发；
+- 通过广告分成、打赏分成、会员制等方式间接获利；
+- 企业内部用于营利性生产流程。
+
+**1.4 「非商业性使用」**
+指不以获取经济利益为目的的使用，包括：个人学习、个人创作、学术研究、非营利组织的非营利活动、免费开源项目集成。
+
+**1.5 「相同协议」**
+指本协议的 1.0 版，或由原作者后续发布的、条款强度不低于本协议的更新版本。
+
+---
+
+## 第二条 · 授权
+
+在**完全遵守本协议全部条款**的前提下，授权人授予你一项全球范围、免版税、非独占的许可，允许你：
+
+1. **使用**本作品，包括运行、展示、执行；
+2. **复制**本作品，包括下载、备份、镜像；
+3. **修改**本作品，包括改动代码、增删词库、调整规则；
+4. **分发**本作品及衍生作品，包括公开发布、打包传播。
+
+上述权利**不可转让**，且仅在你遵守本协议期间有效。
+
+---
+
+## 第三条 · 强制条件
+
+行使第二条授权时，你**必须**同时满足以下全部条件。任一条件不满足，授权自动失效。
+
+### 3.1 保留署名（Attribution）
+
+你必须在本作品及任何衍生作品的显著位置，完整保留以下信息：
+
+- 原作者名称：**咖喱给给咖喱给给给**
+- 原作者平台与 UID：**哔哩哔哩 · 404690009**
+- 原作者空间地址：`https://space.bilibili.com/404690009`
+- 本仓库地址：`https://github.com/hsdgsdfger/danbooru-`
+- 本协议全文或指向本协议的有效链接
+
+不得删除、遮挡、篡改上述信息，不得以任何方式暗示原作者为你的衍生作品背书。
+
+### 3.2 禁止商业使用（Non-Commercial）
+
+你**不得**将本作品或任何衍生作品用于第 1.3 条定义的任何商业性使用。
+
+若你有商业使用需求，**必须事先取得原作者的单独书面授权**。联系方式见原作者 B 站空间。
+
+### 3.3 相同方式共享（Share-Alike / Copyleft）
+
+你若分发本作品或衍生作品（无论修改与否、无论以源码还是二进制形式、无论是否收费），**必须**：
+
+1. 以**本协议或相同协议**授权；
+2. 提供**完整的对应源代码**，包括你对本作品所做的全部修改；
+3. 不得附加任何额外条款，限制他人行使本协议授予的权利。
+
+**特别注意**：将本作品整体或部分嵌入闭源项目、或以「仅提供编译产物/打包文件/在线服务接口」的方式发布而不公开源码，均**违反**本条。
+
+### 3.4 标明修改（State Changes）
+
+你必须在衍生作品中明确标注：
+
+- 你修改了哪些文件；
+- 修改的内容概要；
+- 修改日期。
+
+不得以任何方式让人误以为衍生作品是未经修改的原作。
+
+### 3.5 保留协议文本
+
+分发时必须随附本协议全文（`LICENSE` 文件），不得替换为其他协议。
+
+### 3.6 网络服务条款（Network Use）
+
+你若修改本作品并通过网络提供服务（包括但不限于在线 API、网页版工具、QQ 机器人、Discord 机器人、微信小程序），**必须**向所有使用者公开你所修改部分的完整源代码，并保留原作者署名。
+
+---
+
+## 第四条 · 授权终止
+
+**4.1** 你一旦违反本协议任何条款，本协议授予你的全部权利**立即自动终止**，无需另行通知。
+
+**4.2** 授权终止后，你必须立即停止使用本作品，删除全部副本，并下架所有已分发的衍生作品。
+
+**4.3** 授权终止不影响：
+
+- 授权人在终止前已向你主张的权利；
+- 其他遵守协议的接收方从你处合法获得的授权。
+
+**4.4** 若你纠正了违约行为并书面承诺不再违反，授权人可自行决定是否恢复你的授权。恢复与否不构成对过往违约的豁免。
+
+---
+
+## 第五条 · 免责声明
+
+**5.1** 本作品按「现状」（AS IS）提供，不附带任何明示或默示的担保，包括但不限于对适销性、特定用途适用性、不侵权的担保。
+
+**5.2** 授权人不对以下情况承担任何责任：
+
+- 因使用本作品导致的任何直接、间接、偶然、特殊或后果性损失；
+- 因本作品生成的任何内容引发的法律纠纷；
+- 因使用者违反当地法律法规而产生的任何后果；
+- 数据丢失、模型输出异常、硬件损坏。
+
+**5.3** 本作品包含的标签数据来源于 Danbooru / Gelbooru 等公开社区。使用者应自行确认其使用行为符合当地法律法规及平台服务条款。**使用本作品所生成内容的合规责任，完全由使用者承担。**
+
+**5.4** 本作品中的词库可能包含成人向（NSFW）标签。使用者应确保自身已达到法定成年年龄，并在合法合规的前提下使用。
+
+---
+
+## 第六条 · 其他条款
+
+**6.1 协议可分性**
+本协议任一条款被认定无效或不可执行，不影响其余条款的效力。该条款应在最小必要范围内被调整，以最大程度实现其原意。
+
+**6.2 不放弃权利**
+授权人未行使或延迟行使本协议下的任何权利，不构成对该权利的放弃。
+
+**6.3 完整协议**
+本协议构成双方就本作品达成的完整约定，取代此前的任何口头或书面沟通。
+
+**6.4 协议更新**
+原作者有权发布本协议的新版本。新版本发布后，你可选择继续适用旧版本，或改用新版本。若新版本条款强度低于本版本，以本版本为准。
+
+**6.5 适用法律**
+本协议适用中华人民共和国法律。因本协议产生的争议，双方应友好协商解决；协商不成的，提交授权人所在地有管辖权的人民法院。
+
+---
+
+## 附 · 一句话总结
+
+> **免费用，随便改，改了要开源，不能拿去卖钱，必须写明是咖喱给给咖喱给给给做的。**
+
+---
+
+## 附 · 英文摘要（English Summary）
+
+This project is released under the **Non-Commercial Copyleft License v1.0**.
+
+You are free to:
+
+- **Use** — run, copy, distribute the work
+- **Modify** — change code, add or remove tags, adjust rules
+- **Share** — publish your modified version
+
+Under the following terms:
+
+- **Attribution** — You must credit the original author: 咖喱给给咖喱给给给 (Bilibili UID 404690009, https://space.bilibili.com/404690009) and link back to this repository.
+- **Non-Commercial** — You may **NOT** use this work or any derivative for any commercial purpose. Commercial licensing requires separate written permission from the original author.
+- **Share-Alike** — If you distribute this work or any derivative (modified or not, in source or binary form, including as a network service), you **MUST** release the complete corresponding source code under this same license.
+- **State Changes** — You must clearly indicate what you changed and when.
+- **No Additional Restrictions** — You may not impose terms that legally restrict others from doing anything this license permits.
+
+This license is **NOT** an OSI-approved open source license because it restricts commercial use. It is a **source-available** license.
+
+THE WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. The user assumes all responsibility for compliance with local laws and for any content generated using this work.
+
+For commercial licensing, please contact the original author via Bilibili.

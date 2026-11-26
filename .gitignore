@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# 备份文件（本项目开发过程中产生的 .bak-* 快照，不入库）
+*.bak
+*.bak-*
+*.bak.*
+data/*.bak*
+data/*.tmp
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+
+# 注意：data/*.json 是核心数据，必须入库，不要在这里排除
