@@ -73,6 +73,7 @@ kneehighs, standing, hand on hip, ...
 |---|---|---|
 | `PromptCombiner` | 🎲 Danbooru 抽签机 | 主节点，输出一条拼好的提示词 |
 | `PromptCombinerInfo` | ℹ️ 词库状态 | 只读，显示词库规模与槽位统计 |
+| `PromptCombinerSaveImage` | 💾 保存图片（含提示词） | 保存图片并把提示词写进 PNG 元数据，用于事后排查 |
 
 ### 3.2 主节点参数（18 项）
 
@@ -375,6 +376,69 @@ git clone https://github.com/hsdgsdfger/comfyui-danbooru-prompt-combiner.git com
 
 在 `series` 参数里填作品名（danbooru 写法，如 `genshin_impact`），或在「组合」页签点角色标签上的锁图标。
 
+### 6.5 把提示词写进图片（排查用）
+
+原生 `SaveImage` 只把 **workflow 的静态参数**写进 PNG，里面没有「这次实际抽出了哪些标签」——因为抽签结果是运行时生成的字符串，不在 `widgets_values` 里。想出事后回溯，只能拿 seed 重跑一遍。
+
+`💾 保存图片（含提示词）` 节点解决这个问题：把实际输出一并写进 PNG 的元数据。
+
+**接线方式**
+
+```
+🎲 Danbooru 抽签机 ──标签组合结果──┐
+                                  ├─→ 💾 保存图片（含提示词）──images──→ 后续
+VAE Decode ──────────────────images┘
+```
+
+用它替换原来的 `SaveImage` 即可，输出仍然是 `IMAGE`，可以继续往下接。
+
+**输入参数**
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `images` | ✅ | 要保存的图片 |
+| `prompt_text` | ✅ | 接抽签机的「标签组合结果」 |
+| `filename_prefix` | ✅ | 文件名前缀，默认 `Anima` |
+| `note` | ⬜ | 备注，写进 `anima_note`。建议填模型名/版本号/实验编号 |
+| `tags_json` | ⬜ | 结构化标签 JSON，写进 `anima_slots`，方便程序解析 |
+
+**写入的元数据键**
+
+| 键 | 内容 |
+|---|---|
+| `anima_prompt` | 完整提示词（纯文本） |
+| `anima_note` | 你填的备注 |
+| `anima_slots` | 结构化标签表（JSON） |
+| `prompt` / `workflow` | 保留原生行为，其他工具照常能读 |
+
+含中文时自动改用 iTXt（UTF-8）chunk，不会因编码报错。
+
+**怎么查看**
+
+Windows 资源管理器的「属性 → 详细信息」不显示 PNG 自定义元数据，用下面任一方式：
+
+```bash
+# 方式 1：exiftool（推荐，能列出全部 chunk）
+exiftool 图片.png
+
+# 方式 2：Python 一行
+python -c "from PIL import Image;im=Image.open(r'图片.png');print(im.text.get('anima_prompt'))"
+```
+
+```python
+# 方式 3：批量导出某个文件夹所有图片的提示词
+import os
+from PIL import Image
+
+for f in os.listdir(r"output"):
+    if f.lower().endswith(".png"):
+        im = Image.open(os.path.join("output", f))
+        print(f"\n=== {f} ===")
+        print(im.text.get("anima_prompt", "(无)"))
+```
+
+XnView MP、Honeyview 这类看图软件也能直接看到 PNG 的文本块。
+
 ---
 
 ## 七、后续添加词库的方法与注意事项
@@ -538,6 +602,7 @@ print("新词在不在:", "my_char_(my_series)" in [w["prompt"] for w in pool.sl
 comfyui-prompt-combiner/
 ├── __init__.py              # 插件入口：注册节点、挂载 HTTP 路由、声明前端目录
 ├── nodes.py                 # 节点定义（PromptCombiner / PromptCombinerInfo）
+├── save_node.py             # 保存节点：把提示词写进 PNG 元数据（独立文件，加载失败不影响主节点）
 ├── core.py                  # 核心引擎：数据加载、池构建、抽词、跨槽协调、格式化
 ├── server.py                # 面板用的 HTTP API（/pc/preview、/pc/slotpool 等）
 ├── js/
