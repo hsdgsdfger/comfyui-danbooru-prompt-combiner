@@ -319,7 +319,7 @@ Anima 等新模型用 danbooru 标签训练，这类词在标签库里根本不�
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/hsdgsdfger/danbooru-.git comfyui-prompt-combiner
+git clone https://github.com/hsdgsdfger/comfyui-danbooru-prompt-combiner.git comfyui-prompt-combiner
 ```
 
 或者在 ComfyUI-Manager 里用「Install from Git URL」填入仓库地址。
