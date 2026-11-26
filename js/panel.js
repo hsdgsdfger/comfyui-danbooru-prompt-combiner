@@ -3012,7 +3012,12 @@ function openFullPanel(node, container) {
           /* ⚠️ 必须带上当前槽位表（含每槽数量）——
              否则面板上改了数量/开关，预览还是按预设抽，和真跑工作流对不上。
              （2026-09-29 实测踩过：首饰=3 预览仍只出 1 个） */
-          slots: (() => { const c = currentOn(); return Object.keys(c).length ? c : null; })(),
+          slots: (() => {
+            /* 有手动表就原样发送，尤其要保留「全关」的全零表；
+               不能用 currentOn() 后再按空对象转 null，否则又会回退到预设。 */
+            const raw = readSlots();
+            return raw && typeof raw === "object" && !Array.isArray(raw) && Object.keys(raw).length ? raw : null;
+          })(),
           /* 锁定标签（2026-10-05）：后端会原样保留这些词，并优先占用它们的互斥组。
              ⛔ 不发的话「锁定」就只是界面上一个装饰，下次生成照样换掉。 */
           locked: _lock,
@@ -6043,7 +6048,10 @@ function openFullPanel(node, container) {
     toast("已开启全部槽位（点「组合生成」生效）");
   };
   q("#pcGAllOff").onclick = () => {
-    writeSlots({}); renderGen();
+    /* 空对象/空字符串的既有语义是「跟随预设」，不能拿来表示全关。
+       写入显式全零表：readSlots/currentOn 能识别为手动配置，后端也会保留 0。 */
+    const c = {}; meta.slotOrder.forEach((s) => { c[s] = 0; });
+    writeSlots(c); renderGen();
     toast("已关闭全部槽位（点「组合生成」生效）");
   };
   q("#pcGCn").onclick = () => {
@@ -6280,6 +6288,7 @@ function openFullPanel(node, container) {
       if (p.preset) setW("preset", p.preset);
       if (p.gender) setW("gender", p.gender);
       setW("nsfw_filter", !!p.nsfw);
+      setW("nsfw_only", !!p.nsfwOnly);
       setW("slots_json", p.slotsRaw || "");
       setW("series", p.series || "");
       seriesQ = p.series || "";

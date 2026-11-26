@@ -1020,9 +1020,22 @@ class Pool:
                 out = [w for w in out if _is_nonperson_char(w["prompt"])
                        or _is_species_char(w.get("name"))]
                 # 再补上词典里有、但槽索引里被剔掉的非人角色（动物/兽人/机甲…）
+                # 补充池也必须走主池的禁用作品、系列和用户剔除规则；否则限定
+                # 「宝可梦」时仍会混入高达/原神等角色，右键剔除也会失效。
+                _extra = self.nonperson_extra()
+                if _block or _blockch:
+                    _extra = [w for w in _extra
+                              if _crmap.get(str(w["prompt"]).replace(" ", "_")) not in _block
+                              and str(w["prompt"]).replace(" ", "_").lower() not in _blockch]
+                if self.series:
+                    allow, _ = self.series_allow()
+                    if allow is not None:
+                        _extra = [w for w in _extra if w["prompt"] in allow]
+                _removed = set((self.slot_edits.get("removed") or {}).get("角色") or [])
+                if _removed:
+                    _extra = [w for w in _extra if w["prompt"] not in _removed]
                 _have = {str(w["prompt"]) for w in out}
-                out = out + [w for w in self.nonperson_extra()
-                             if str(w["prompt"]) not in _have]
+                out = out + [w for w in _extra if str(w["prompt"]) not in _have]
             else:
                 # ⚠️ 2026-10-19（阿君报「奇怪龙在人类女性池里」）：光靠 `_is_nonperson_char`
                 #   不够 —— 它只认名字形状（titan/dragon/slime…），`khezu`（奇怪龙）、
@@ -1192,7 +1205,13 @@ class Pool:
         try:
             self._nsfw_probe = True
             self.nsfw_filter = False
+            _removed = set((self.slot_edits.get("removed") or {}).get(slot) or [])
             for w in (self.raw_pool(slot) or []):
+                # _pass 只负责自动规则，不会应用 slot_edits。用户已经剔除的
+                # NSFW 词不能继续参与「这个槽有没有 NSFW」的判断，否则剩余
+                # 安全词也会被 nsfw_only 全部过滤掉。
+                if w["prompt"] in _removed:
+                    continue
                 if (w.get("n") or 0) == 1 and self._pass(slot, w):
                     ok = True
                     break
@@ -2367,19 +2386,22 @@ class Generator:
                 if _n == 2 and _mixed:
                     # 一男一女 → danbooru 的写法是**两个**人数词，不是 2girls
                     for _w2 in ("1girl", "1boy"):
-                        if not any(nz(c) == _w2 for c in result):
+                        if (_w2 not in self.black and nz(_w2) not in self.black
+                                and not any(nz(c) == _w2 for c in result)):
                             result.append({"prompt": _w2, "name": _w2, "slot": "人数",
                                            "g": "g_count"})
                 else:
-                    if not any(nz(c) == _cnt for c in result):
+                    if (_cnt not in self.black and nz(_cnt) not in self.black
+                            and not any(nz(c) == _cnt for c in result)):
                         result.append({"prompt": _cnt, "name": _cnt, "slot": "人数",
                                        "g": "g_count"})
                 # solo 只在「画面里就一个人、且没有双人互动」时才成立
-                if _n == 1 and not _duo and not any(nz(c) == "solo" for c in result):
+                if (_n == 1 and not _duo and "solo" not in self.black
+                        and not any(nz(c) == "solo" for c in result)):
                     result.append({"prompt": "solo", "name": "solo", "slot": "人数", "g": None})
-        # 2026-10-17 阿君拍板：**自动补作品固定开启，不再留开关** ——
-        #   抽到角色就补所属作品，抽不到就什么也不做。原 auto_cr 参数保留只为兼容。
-        self._append_copyright(result)
+        # 自动补作品遵循节点/面板的 auto_copyright 开关；默认开启。
+        if self.auto_cr:
+            self._append_copyright(result)
         if self.auto_boost:
             self._append_boost(result)
         # ⛔ 2026-10-14 终检：手部一致性兜底 —— 后置补位（删了又补回的词）会在时序上绕过
@@ -3105,7 +3127,8 @@ class Generator:
             _fake_sock = {"barefoot", "bare_feet", "bare_legs", "toeless_legwear"}
             _real_sock = [c for c in result if c["slot"] == "袜子"
                           and nz(c["prompt"]) not in _fake_sock]
-            if not any(c["slot"] == "鞋子" for c in result) and not _real_sock:
+            if (not any(c["slot"] == "鞋子" for c in result) and not _real_sock
+                    and "barefoot" not in self.black and "bare feet" not in self.black):
                 result.append({"prompt": "barefoot", "name": "赤脚",
                                "slot": "鞋子", "g": ""})
 

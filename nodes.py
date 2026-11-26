@@ -290,7 +290,7 @@ class PromptCombiner:
            而 seed 往往没变（翻历史 / 手改一个词）—— 不加就会一直吐缓存，
            表现成「翻了历史点运行还是老样子」，比不修还糟。
         """
-        keys = ("preset", "gender", "nsfw_filter", "add_quality", "space_out",
+        keys = ("preset", "gender", "nsfw_filter", "nsfw_only", "add_quality", "space_out",
                 "neg_mode", "show_detail", "slots_json", "series", "locked_json",
                 "auto_copyright", "auto_boost", "anima_mode", "cross_series",
                 "pinned_prompt")

@@ -430,6 +430,9 @@ async def pc_user_post(request):
         u["seedParams"] = _sp
     _user_save()
     _slots_of_drop_cache()      # 槽池变了，反查表必须作废
+    if isinstance(data.get("black"), list):
+        # 角色搜索缓存不能只靠黑名单长度作键：等长替换也必须立即生效。
+        _CHAR_SET_CACHE.clear()
     # ⭐ 2026-10-06：槽位表也跟着重建（新建/删除槽位后立刻生效，不用重启 ComfyUI）
     try:
         Data.get().refresh_slots()
@@ -452,6 +455,7 @@ async def pc_user_reset(request):
     except Exception:
         pass
     _slots_of_drop_cache()
+    _CHAR_SET_CACHE.clear()
     # ⭐ 2026-10-19：重置 = 文件删了 ⇒ 槽位表 + 权重都必须回到默认（否则旧值还挂在内存里）
     try:
         Data.get().refresh_slots()
@@ -966,6 +970,7 @@ async def pc_dict(request):
         nsfw = request.query.get("nsfw", "1") not in ("0", "false")
 
         pool = Pool(db, gender=gender, nsfw_filter=nsfw, black=load_user_black())
+        _dict_black = {str(p).replace(" ", "_").lower() for p in pool.black}
         # 一个循环同时处理「分类 + 关键词」（两者可叠加）——
         # 原来分两条分支，搜索时 cat 被忽略，且留了段无用的 pass 死代码。
         CAPPED = 3000
@@ -977,6 +982,11 @@ async def pc_dict(request):
         # 子分类过滤：走 _subcat_of（首个命中 + 首字母分段，与网页/子分类统计同一套语义）
         for i in range(len(db.dict_rows)):
             w = db.word(i)
+            # 全局黑名单不只约束角色池；通用/画师/版权等分类的词库浏览
+            # 也不能继续展示已剔除标签。此前构造了 pool 却没有实际使用。
+            _prompt_key = str(w["prompt"] or "").replace(" ", "_").lower()
+            if _prompt_key in _dict_black:
+                continue
             if cat and w["category"] != cat:
                 continue
             if sub and _subcat_of(cat, w["prompt"], w.get("pc")) != sub:
