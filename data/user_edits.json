@@ -3,7 +3,10 @@
   "removed": {
    "头饰配件": [
     "ears_through_hood",
-    "multiple_hats"
+    "multiple_hats",
+    "eighth_note",
+    "map_pin",
+    "nazi_party_pin"
    ],
    "发色": [],
    "袖型与领口": [
@@ -13,7 +16,28 @@
     "cross-laced_slit",
     "product_placement",
     "shared_scarf",
-    "shoulder_belt"
+    "shoulder_belt",
+    "bdsm",
+    "femdom",
+    "material_growth",
+    "suspension",
+    "power_symbol",
+    "masochism",
+    "sadism",
+    "punishment",
+    "electrostimulation",
+    "wax_play",
+    "submission",
+    "tied_up",
+    "blindfolded",
+    "chastity",
+    "degradation",
+    "dominance",
+    "maledom",
+    "domination",
+    "discipline",
+    "product_photography",
+    "ice_play"
    ],
    "眼睛": [
     "no_pupils",
@@ -35,6 +59,63 @@
    ],
    "鞋子": [
     "barefoot"
+   ],
+   "表情": [
+    "cum",
+    "blood",
+    "facial",
+    "cum_overflow",
+    "excessive_cum",
+    "blood_drip",
+    "cum_in_container",
+    "cum_dripping",
+    "squirting",
+    "climax",
+    "internal_cum",
+    "cum_drip",
+    "logo_mark",
+    "cruel_blood_oath"
+   ],
+   "上装": [
+    "rhine_lab_logo",
+    "virgin"
+   ],
+   "连衣裙与制服": [
+    "bondage",
+    "music",
+    "predicament_bondage",
+    "suspension_bondage"
+   ],
+   "首饰": [
+    "loose",
+    "traditional"
+   ],
+   "双人互动": [
+    "erection",
+    "ejaculation",
+    "masturbation",
+    "rape",
+    "netorare",
+    "exhibitionism",
+    "hypnosis",
+    "humiliation",
+    "harem",
+    "voyeurism",
+    "chikan",
+    "netorase",
+    "cuckold",
+    "adult-only_scene",
+    "clearly_adult",
+    "consensual",
+    "consenting_adults",
+    "self-bondage",
+    "public_display",
+    "coercion"
+   ],
+   "动物": [
+    "inflation",
+    "oviposition",
+    "possession"
    ]
   },
   "added": {
