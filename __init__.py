@@ -17,32 +17,31 @@ try:
 except ImportError:      # 兼容「把插件目录塞进 sys.path 后直接 import」的加载方式
     from nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 
-# ---- 可选组件：带提示词元数据的保存节点 ----
+# ---- 可选组件：提示词元数据写入 ----
 # 独立成 save_node.py，不塞进 nodes.py：拷贝一份 dict 再合并，
 # 避免直接改动 nodes 模块里那个 dict 对象。
 # 加载失败只打日志，绝不拖垮主节点。
 try:
     try:
-        from .save_node import PromptCombinerSaveImage
+        from .save_node import PromptCombinerMetaWriter, install_save_hooks
     except ImportError:
-        from save_node import PromptCombinerSaveImage
+        from save_node import PromptCombinerMetaWriter, install_save_hooks
     NODE_CLASS_MAPPINGS = dict(NODE_CLASS_MAPPINGS)
     NODE_DISPLAY_NAME_MAPPINGS = dict(NODE_DISPLAY_NAME_MAPPINGS)
-    NODE_CLASS_MAPPINGS["PromptCombinerSaveImage"] = PromptCombinerSaveImage
-    NODE_DISPLAY_NAME_MAPPINGS["PromptCombinerSaveImage"] = "💾 保存图片（含提示词）"
+    NODE_CLASS_MAPPINGS["PromptCombinerMetaWriter"] = PromptCombinerMetaWriter
+    NODE_DISPLAY_NAME_MAPPINGS["PromptCombinerMetaWriter"] = "✍️ 写入提示词元数据"
+    # 旧名保留为别名：老工作流里若存了 PromptCombinerSaveImage，不会变成失踪节点。
+    # 该类已不再保存图片，行为与上面的登记节点一致。
+    NODE_CLASS_MAPPINGS["PromptCombinerSaveImage"] = PromptCombinerMetaWriter
 
-    # 安装钩子：让**原生 SaveImage** 保存后自动补写提示词。
-    # 装不上只打日志，不影响出图。
+    # 首次尝试安装钩子。这里可能还有别的插件没加载完，
+    # nodes.py 的 run() 里每次执行都会再调一次（幂等），确保覆盖全。
     try:
-        try:
-            from .save_node import install_saveimage_hook
-        except ImportError:
-            from save_node import install_saveimage_hook
-        install_saveimage_hook()
+        install_save_hooks(verbose=True)
     except Exception as _he:
         print("[prompt-combiner] 元数据钩子安装失败（不影响出图）:", _he)
 except Exception as _e:
-    print("[prompt-combiner] 保存节点加载失败（不影响抽签机）:", _e)
+    print("[prompt-combiner] 提示词元数据组件加载失败（不影响抽签机）:", _e)
 
 # 导入即注册 HTTP 路由（挂在 PromptServer.instance.routes 上）。
 # ⚠️ 这里的 `from server import PromptServer` 用的是**绝对导入**，

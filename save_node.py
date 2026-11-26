@@ -1,21 +1,28 @@
-# ComfyUI 节点:带提示词元数据的图片保存
+# ComfyUI 组件:把抽签结果写进 PNG 元数据
 #
-# 原生 SaveImage 只把 workflow 的**静态参数**写进 PNG，其中不含「这次运行时实际
-# 抽出了哪些标签」——因为 PromptCombiner 的输出是运行时生成的字符串，不在
-# widgets_values 里。想靠图片回溯用了什么标签，只能重新跑一遍 seed。
+# 两件事，分工明确：
 #
-# 这个节点把 PromptCombiner 的实际输出一并写进 PNG 的 iTXt chunk，键名：
-#   anima_prompt   完整提示词（纯文本，可直接看）
-#   anima_note     用户备注（模型名 / 版本 / 实验编号）
-#   anima_slots    结构化标签表（JSON，含槽位，方便程序解析）
+#   1. ✍️ 写入提示词元数据（PromptCombinerMetaWriter）
+#      纯登记节点 —— **不接收图片、不保存任何文件**。
+#      它只把提示词（可选备注 / 结构化标签）记进进程状态，等保存节点落盘后由钩子写入。
 #
-# iTXt 是 UTF-8，中文备注不会炸；tEXt 只支持 latin-1，中文会 UnicodeEncodeError。
+#   2. install_save_hooks()
+#      包装**所有已注册的保存节点**，图片写完就地插入 anima_prompt chunk。
+#      覆盖原生 SaveImage、SaveImageClean（comfyui-save-image-organized）等
+#      任何 NODE_CLASS_MAPPINGS 里名字含 saveimage 且 FUNCTION 可调用的类。
+#
+# 为什么不做"接收图片但不保存"的节点：
+#   ComfyUI 节点之间只传 tensor，拿不到磁盘路径；PNG 元数据是文件结构的一部分，
+#   必须在文件写完之后才能改。所以"写元数据"只能挂在保存动作之后，
+#   靠一个纯登记节点 + 保存后置钩子来配合。
+#
+# 为什么用字节插入而不是 PIL 重存：
+#   PIL 重新 save 会丢掉 iCCP / pHYs / sRGB 等非文本 chunk，色彩配置可能受影响。
+#   这里直接在 IEND 前插 iTXt，像素零改动（实测逐像素一致，文件仅 +67 字节）。
 
 import json
 import os
-
-import numpy as np
-from PIL import Image, PngImagePlugin
+import time
 
 try:
     import folder_paths
@@ -28,119 +35,6 @@ try:
 except Exception:
     _DISABLE_META = False
 
-
-def write_png_with_meta(path, img, meta: dict, compress_level=4):
-    """把 PIL Image 存成 PNG，并把 meta 里的键值写成 iTXt chunk。
-
-    单独抽出来的原因：脱离 ComfyUI 也能测（见文件末尾 __main__）。
-    非 ASCII 走 iTXt；纯 ASCII 走 tEXt（兼容更老的读取工具）。
-    """
-    info = PngImagePlugin.PngInfo()
-    for k, v in meta.items():
-        if v is None:
-            continue
-        s = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
-        try:
-            s.encode("latin-1")
-            info.add_text(k, s)          # 纯 ASCII，老工具也认
-        except UnicodeEncodeError:
-            info.add_itxt(k, s)          # 含中文 → UTF-8
-    img.save(path, pnginfo=info, compress_level=compress_level)
-    return path
-
-
-class PromptCombinerSaveImage:
-    """保存图片，并把抽签机产出的提示词写进图片元数据。"""
-
-    def __init__(self):
-        self.output_dir = folder_paths.get_output_directory() if folder_paths else "."
-        self.type = "output"
-        self.compress_level = 4
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "images": ("IMAGE", {"tooltip": "要保存的图片"}),
-                "prompt_text": ("STRING", {
-                    "forceInput": True, "multiline": True,
-                    "tooltip": "接抽签机的「标签组合结果」。会写进图片的 anima_prompt",
-                }),
-                "filename_prefix": ("STRING", {"default": "Anima"}),
-            },
-            "optional": {
-                "note": ("STRING", {
-                    "default": "", "multiline": False,
-                    "tooltip": "备注，写进 anima_note。可填模型名/版本/实验编号",
-                }),
-                "tags_json": ("STRING", {
-                    "forceInput": True, "multiline": True,
-                    "tooltip": "可选。接结构化标签（JSON 数组），写进 anima_slots，方便程序解析",
-                }),
-            },
-            "hidden": {
-                "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO",
-            },
-        }
-
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("images",)
-    FUNCTION = "save_images"
-    OUTPUT_NODE = True
-    CATEGORY = "Danbooru 抽签机"
-    DESCRIPTION = ("保存图片并把提示词写进 PNG 元数据（anima_prompt / anima_note / "
-                   "anima_slots）。替代原生 SaveImage 使用，排查用哪套标签时直接看图片属性。")
-
-    def save_images(self, images, prompt_text, filename_prefix="Anima",
-                    note="", tags_json="", prompt=None, extra_pnginfo=None):
-        if folder_paths is None:
-            raise RuntimeError("此节点需要运行在 ComfyUI 内（folder_paths 不可用）")
-
-        full_output_folder, filename, counter, subfolder, filename_prefix = \
-            folder_paths.get_save_image_path(
-                filename_prefix, self.output_dir,
-                images[0].shape[1], images[0].shape[0])
-
-        results = []
-        for batch_number, image in enumerate(images):
-            arr = 255. * image.cpu().numpy()
-            img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
-
-            meta = {}
-            if not _DISABLE_META:
-                # 保留原生行为：workflow 与 API prompt 照写，不影响其他工具读取
-                if prompt is not None:
-                    meta["prompt"] = json.dumps(prompt, ensure_ascii=False)
-                if extra_pnginfo is not None:
-                    for x in extra_pnginfo:
-                        meta[x] = json.dumps(extra_pnginfo[x], ensure_ascii=False)
-                # 本项目新增
-                meta["anima_prompt"] = prompt_text or ""
-                meta["anima_note"] = note or ""
-                if tags_json and tags_json.strip():
-                    meta["anima_slots"] = tags_json
-
-            fname = filename.replace("%batch_num%", str(batch_number))
-            file = f"{fname}_{counter:05}_.png"
-            write_png_with_meta(os.path.join(full_output_folder, file), img, meta,
-                                self.compress_level)
-            results.append({"filename": file, "subfolder": subfolder, "type": self.type})
-            counter += 1
-
-        return {"ui": {"images": results}, "result": (images,)}
-
-
-# ---------------------------------------------------------------- SaveImage 钩子
-#
-# 用途：让**原生 SaveImage** 在保存图片后自动补写提示词，用户工作流一行都不用改。
-#
-# 为什么不是「节点只写元数据」：ComfyUI 节点之间只传 tensor，拿不到图片路径；
-# PNG 的元数据又是文件结构的一部分，必须在写文件时或之后重写。
-# 所以只能在 SaveImage 保存完之后，就地往文件里插 chunk。
-#
-# 为什么用字节插入而不是 PIL 重存：PIL 重新 save 会丢掉 iCCP / pHYs / sRGB
-# 等非文本 chunk，色彩配置可能受影响。这里直接在 IEND 前插 iTXt，像素零改动。
-
 try:
     from . import state as _state
 except ImportError:
@@ -150,8 +44,85 @@ except ImportError:
         _state = None
 
 
+# ================================================================ 纯登记节点
+
+class PromptCombinerMetaWriter:
+    """只登记提示词，不保存图片。
+
+    保存动作交给工作流里已有的 SaveImage / SaveImageClean：它落盘后，
+    钩子从进程状态里取走提示词并写进 PNG 的 anima_prompt。
+    """
+
+    def __init__(self):
+        self.output_dir = folder_paths.get_output_directory() if folder_paths else "."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt_text": ("STRING", {
+                    "forceInput": True, "multiline": True,
+                    "tooltip": "接抽签机的「标签组合结果」。会写进后面保存的 PNG（anima_prompt）",
+                }),
+            },
+            "optional": {
+                "note": ("STRING", {
+                    "default": "", "multiline": False,
+                    "tooltip": "备注，写进 anima_note。可填模型名 / 版本 / 实验编号",
+                }),
+                "tags_json": ("STRING", {
+                    "forceInput": True, "multiline": True,
+                    "tooltip": "可选。结构化标签（JSON 数组），写进 anima_slots，方便程序解析",
+                }),
+                "write_log": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "同时记录日志", "label_off": "不记",
+                    "tooltip": "额外把每次结果追加一行到 output/_anima_prompts.jsonl，方便批量检索",
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("prompt_text",)
+    FUNCTION = "write_meta"
+    OUTPUT_NODE = True
+    CATEGORY = "Danbooru 抽签机"
+    DESCRIPTION = ("只登记提示词，不保存图片。后续 SaveImage / SaveImageClean 落盘时，"
+                   "钩子会把提示词写进 PNG 元数据。")
+
+    def write_meta(self, prompt_text, note="", tags_json="", write_log=False):
+        text = str(prompt_text or "")
+
+        if text.strip() and _state is not None:
+            _state.remember(text, note=note or "", tags=tags_json or "")
+
+        if write_log and text.strip() and folder_paths is not None:
+            self._append_log(text, note, tags_json)
+
+        # 节点上直接显示写进去的内容，便于确认
+        return {"ui": {"text": [text]}, "result": (text,)}
+
+    def _append_log(self, text, note, tags_json):
+        try:
+            p = os.path.join(self.output_dir, "_anima_prompts.jsonl")
+            rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "prompt": text}
+            if note:
+                rec["note"] = note
+            if tags_json and tags_json.strip():
+                try:
+                    rec["tags"] = json.loads(tags_json)
+                except Exception:
+                    rec["tags_raw"] = tags_json
+            with open(p, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception as e:
+            print(f"[prompt-combiner] 写提示词日志失败: {e}")
+
+
+# ================================================================ PNG 元数据
+
 def _png_find_text(data: bytes, key: str) -> bool:
-    return key.encode("latin-1") in data
+    return key.encode("latin-1") + b"\x00" in data
 
 
 def _png_insert_itxt(data: bytes, key: str, value: str) -> bytes:
@@ -175,87 +146,199 @@ def _png_insert_itxt(data: bytes, key: str, value: str) -> bytes:
     return data[:pos] + chunk + data[pos:]
 
 
-def inject_meta(path, text, key="anima_prompt"):
-    """把提示词写进已保存的 PNG。已存在同名键则跳过（幂等）。"""
+def inject_meta(path, meta, key="anima_prompt"):
+    """把元数据写进已保存的 PNG。已存在同名键则跳过（幂等）。
+
+    meta 传 str  → 写单个键（默认 anima_prompt）
+    meta 传 dict → 逐个键写入
+    """
     try:
+        if isinstance(meta, dict):
+            items = {k: v for k, v in meta.items() if v not in (None, "")}
+        else:
+            items = {key: meta}
+
+        if not items:
+            return False
+
         with open(path, "rb") as f:
             data = f.read()
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
-            return False                     # 非 PNG 跳过
-        if _png_find_text(data, key):
+            return False                     # 非 PNG 跳过（webp/jpg 不支持）
+
+        changed = False
+        for k, v in items.items():
+            if _png_find_text(data, k):
+                continue                     # 已有该键，不重复插
+            data = _png_insert_itxt(data, k, str(v))
+            changed = True
+
+        if not changed:
             return True
-        out = _png_insert_itxt(data, key, text)
         with open(path, "wb") as f:
-            f.write(out)
+            f.write(data)
         return True
     except Exception as e:
         print(f"[prompt-combiner] 写元数据失败 {os.path.basename(str(path))}: {e}")
         return False
 
 
-_HOOKED = False
+# ================================================================ 保存节点钩子
+
+_HOOKED_CLASSES = set()
 
 
-def install_saveimage_hook():
-    """包装 ComfyUI 原生的 SaveImage.save_images，保存后自动补写提示词。
+def _paths_from_result(node, res):
+    """从保存节点的返回值里提取刚写盘的 PNG 绝对路径。"""
+    paths = []
 
-    开关：环境变量 `ANIMA_META_HOOK=0` 可关闭。
-    只在 `self.type == "output"` 时写，避免污染 PreviewImage 的临时文件。
-    """
-    global _HOOKED
-    if _HOOKED:
-        return True
-    if os.environ.get("ANIMA_META_HOOK", "1") == "0":
-        print("[prompt-combiner] ANIMA_META_HOOK=0，图片元数据钩子已关闭")
+    if not isinstance(res, dict):
+        # 少数节点直接返回 tuple
+        if isinstance(res, (list, tuple)):
+            for v in res:
+                if isinstance(v, str) and v.lower().endswith(".png") and os.path.exists(v):
+                    paths.append(v)
+        return paths
+
+    # ① 标准 ui.images（原生 SaveImage / SaveImageClean 都有）
+    base = getattr(node, "output_dir", None)
+    for item in (res.get("ui") or {}).get("images") or []:
+        if not isinstance(item, dict):
+            continue
+        fn = item.get("filename")
+        if not fn:
+            continue
+        sub = item.get("subfolder") or ""
+        candidates = []
+        if base:
+            candidates.append(os.path.join(base, sub, fn))
+        candidates.append(os.path.join(sub, fn) if sub else fn)
+        for p in candidates:
+            if os.path.exists(p):
+                paths.append(p)
+                break
+
+    # ② result 里的绝对路径（SaveImageClean 的 FILE_PATH）
+    r = res.get("result")
+    if isinstance(r, (list, tuple)):
+        for v in r:
+            if isinstance(v, str) and v.lower().endswith(".png") and os.path.exists(v):
+                paths.append(v)
+
+    return paths
+
+
+def _inject_after_save(node, res):
+    if _state is None or _DISABLE_META:
+        return
+    if getattr(node, "type", "output") != "output":
+        return                          # 不碰 PreviewImage 的临时文件
+
+    info = _state.recent_full() if hasattr(_state, "recent_full") else None
+    if not info or not info.get("text"):
+        return
+
+    meta = {"anima_prompt": info["text"]}
+    if info.get("note"):
+        meta["anima_note"] = info["note"]
+    if info.get("tags"):
+        meta["anima_slots"] = info["tags"]
+
+    for p in dict.fromkeys(_paths_from_result(node, res)):
+        if p.lower().endswith(".png"):
+            inject_meta(p, meta)
+
+
+def _wrap_save_class(name, cls):
+    """包装一个保存类的 FUNCTION 方法。返回是否新装。"""
+    if cls in _HOOKED_CLASSES:
         return False
 
-    import sys as _sys
-    mod = _sys.modules.get("nodes")          # ComfyUI 自己的 nodes 模块
-    if mod is None or not hasattr(mod, "SaveImage"):
-        print("[prompt-combiner] 找不到 ComfyUI 的 nodes.SaveImage，元数据钩子未安装")
+    fn_name = getattr(cls, "FUNCTION", None)
+    if not fn_name or not callable(getattr(cls, fn_name, None)):
+        # 少数节点没声明 FUNCTION，按约定俗成的名字兜底
+        fn_name = "save_images" if callable(getattr(cls, "save_images", None)) else None
+    if not fn_name:
         return False
-    if getattr(mod.SaveImage, "_anima_hooked", False):
-        _HOOKED = True
-        return True
 
-    orig = mod.SaveImage.save_images
+    orig = getattr(cls, fn_name)
+    if getattr(orig, "_anima_hooked", False):
+        _HOOKED_CLASSES.add(cls)
+        return False
 
-    def patched(self, images, filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None):
-        res = orig(self, images, filename_prefix, prompt, extra_pnginfo)
+    def patched(self, *args, **kwargs):
+        res = orig(self, *args, **kwargs)
         try:
-            if _state is None or getattr(self, "type", "output") != "output":
-                return res
-            text = _state.recent()
-            if not text:
-                return res
-            base = getattr(self, "output_dir", ".") or "."
-            for item in (res.get("ui") or {}).get("images") or []:
-                fn = item.get("filename")
-                if not fn:
-                    continue
-                p = os.path.join(base, item.get("subfolder") or "", fn)
-                if os.path.exists(p):
-                    inject_meta(p, text)
+            _inject_after_save(self, res)
         except Exception as e:
             # 写元数据失败绝不能影响出图
-            print("[prompt-combiner] 元数据钩子异常:", e)
+            print("[prompt-combiner] 元数据写入异常:", e)
         return res
 
-    mod.SaveImage.save_images = patched
-    mod.SaveImage._anima_hooked = True
-    _HOOKED = True
-    print("[prompt-combiner] 已安装 SaveImage 元数据钩子（提示词会自动写进 PNG）")
+    patched._anima_hooked = True
+    patched.__name__ = getattr(orig, "__name__", "save_images")
+    patched.__doc__ = getattr(orig, "__doc__", None)
+    setattr(cls, fn_name, patched)
+    _HOOKED_CLASSES.add(cls)
     return True
+
+
+def install_save_hooks(verbose=True):
+    """包装所有已注册的保存节点，落盘后自动补写提示词。
+
+    覆盖范围：NODE_CLASS_MAPPINGS 里类名含 saveimage 的全部节点
+    （原生 SaveImage、SaveImageClean、以及将来装的同类插件）。
+
+    ⚠️ 必须在**所有插件加载完之后**调用才完整 —— 所以 nodes.py 的 run() 里
+       每次都会调一次（内部有幂等判断，重复调用几乎零开销）。
+
+    开关：环境变量 `ANIMA_META_HOOK=0` 关闭。
+    """
+    if os.environ.get("ANIMA_META_HOOK", "1") == "0":
+        if verbose:
+            print("[prompt-combiner] ANIMA_META_HOOK=0，图片元数据钩子已关闭")
+        return []
+
+    import sys as _sys
+    mod = _sys.modules.get("nodes")
+    mapping = getattr(mod, "NODE_CLASS_MAPPINGS", None) if mod else None
+    if not mapping:
+        if verbose:
+            print("[prompt-combiner] 找不到 ComfyUI 的节点注册表，钩子暂未安装")
+        return []
+
+    newly = []
+    for name, cls in list(mapping.items()):
+        if "saveimage" not in str(name).lower().replace("_", ""):
+            continue
+        try:
+            if _wrap_save_class(name, cls):
+                newly.append(name)
+        except Exception as e:
+            if verbose:
+                print(f"[prompt-combiner] 包装 {name} 失败: {e}")
+
+    if verbose:
+        if newly:
+            print(f"[prompt-combiner] 已安装图片元数据钩子: {', '.join(newly)}")
+        elif not _HOOKED_CLASSES:
+            print("[prompt-combiner] 未找到可包装的保存节点")
+    return newly
+
+
+# 兼容旧名（__init__.py 早期版本调用过这个）
+install_saveimage_hook = install_save_hooks
 
 
 # ---------------------------------------------------------------- 自测
 # 直接跑：python save_node.py
-# 生成一张小图，写入中英文混合元数据，再读回来验证。
 if __name__ == "__main__":
-    from tempfile import gettempdir
+    import tempfile
+    from PIL import Image
 
-    tmp = os.path.join(gettempdir(), "_anima_meta_test.png")
-    img = Image.new("RGB", (64, 64), (30, 40, 60))
+    tmp = os.path.join(tempfile.gettempdir(), "_anima_meta_test.png")
+    Image.new("RGB", (64, 64), (30, 40, 60)).save(tmp, compress_level=4)
+    before = os.path.getsize(tmp)
 
     sample_prompt = ("masterpiece, best quality, score_7, 1girl, solo, "
                      "hatsune_miku, vocaloid, smile, long hair, twintails")
@@ -264,18 +347,22 @@ if __name__ == "__main__":
         {"slot": "发型", "prompt": "twintails", "name": "双马尾"},
     ], ensure_ascii=False)
 
-    write_png_with_meta(tmp, img, {
+    ok = inject_meta(tmp, {
         "anima_prompt": sample_prompt,
-        "anima_note": "MiaoMiao Harem v1.20z + Turbo LoRA  ·  测试备注",
+        "anima_note": "MiaoMiao Harem v1.20z + Turbo LoRA · 测试备注",
         "anima_slots": sample_slots,
     })
-    print("已写出:", tmp, os.path.getsize(tmp), "字节")
+    print(f"写入: {ok}   文件 {before} → {os.path.getsize(tmp)} 字节")
 
     back = Image.open(tmp)
-    print("\n=== 读回元数据 ===")
+    print("\n=== 读回 ===")
     for k in ("anima_prompt", "anima_note", "anima_slots"):
-        v = back.text.get(k) if hasattr(back, "text") else None
-        print(f"\n[{k}]")
-        print(f"  {v}")
-    ok = back.text.get("anima_prompt") == sample_prompt
-    print(f"\n提示词回读一致: {ok}")
+        print(f"[{k}] {back.text.get(k)}")
+
+    print(f"\n提示词一致: {back.text.get('anima_prompt') == sample_prompt}")
+
+    # 幂等
+    n1 = os.path.getsize(tmp)
+    inject_meta(tmp, {"anima_prompt": "不该覆盖"})
+    print(f"幂等（大小不变）: {os.path.getsize(tmp) == n1}")
+    print(f"原值保留: {Image.open(tmp).text.get('anima_prompt') == sample_prompt}")

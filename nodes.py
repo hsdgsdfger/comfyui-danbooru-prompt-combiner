@@ -206,6 +206,19 @@ class PromptCombiner:
             panel_state="", nsfw_only=False):
         # ⚠️ panel_state 必须收下但**不用**：它只是面板给"切工作流恢复显示"存的快照。
         #    不收会 TypeError（INPUT_TYPES 里的键都会当 kwargs 传进来）。
+        #
+        # 🔧 惰性安装保存钩子：插件加载顺序不保证，__init__.py 装钩子时
+        #    SaveImageClean（comfyui-save-image-organized）可能还没注册。
+        #    这里每次执行都补装一次（幂等，已装过的类直接跳过）。
+        #    不做成 try 里套全局标志，是因为装失败要能重试。
+        try:
+            try:
+                from .save_node import install_save_hooks as _ish
+            except ImportError:
+                from save_node import install_save_hooks as _ish
+            _ish(verbose=False)
+        except Exception:
+            pass
         # ⭐ 2026-10-19（阿君：翻历史后运行，出的是最后一组）：
         #   面板显示什么，节点就输出什么 —— 否则「翻到第 5 组点运行」会按当前 seed
         #   重抽成第 10 组。pinned 非空时**完全不看 seed**，也不做词库校验

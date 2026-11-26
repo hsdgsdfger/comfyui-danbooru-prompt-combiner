@@ -73,7 +73,7 @@ kneehighs, standing, hand on hip, ...
 |---|---|---|
 | `PromptCombiner` | 🎲 Danbooru 抽签机 | 主节点，输出一条拼好的提示词 |
 | `PromptCombinerInfo` | ℹ️ 词库状态 | 只读，显示词库规模与槽位统计 |
-| `PromptCombinerSaveImage` | 💾 保存图片（含提示词） | 保存图片并把提示词写进 PNG 元数据，用于事后排查 |
+| `PromptCombinerMetaWriter` | ✍️ 写入提示词元数据 | **不保存图片**，只登记提示词；保存节点落盘后由钩子写进 PNG，用于事后排查 |
 
 ### 3.2 主节点参数（18 项）
 
@@ -380,66 +380,78 @@ git clone https://github.com/hsdgsdfger/comfyui-danbooru-prompt-combiner.git com
 
 原生 `SaveImage` 只把 **workflow 的静态参数**写进 PNG，里面没有「这次实际抽出了哪些标签」，因为抽签结果是运行时生成的字符串，不在 `widgets_values` 里。想出事后回溯，只能拿 seed 重跑一遍。
 
-本插件用一个**钩子**解决：抽签机每跑一次就把输出暂存，`SaveImage` 保存完图片后自动往 PNG 里插一个 `anima_prompt` 文本块。
+本插件用一个**保存后置钩子**解决：抽签机（或登记节点）先把提示词记进进程状态，任何保存节点落盘 PNG 后，钩子自动往文件里插一个 `anima_prompt` 文本块。
 
 **默认就是开着的，工作流一行都不用改。**
 
+#### 覆盖哪些保存节点
+
+钩子遍历 `NODE_CLASS_MAPPINGS`，包装**所有类名含 `saveimage` 的节点**：
+
+| 节点 | 来源 | 状态 |
+|---|---|---|
+| `SaveImage` | ComfyUI 原生 | ✅ |
+| `SaveImageClean` | `comfyui-save-image-organized` | ✅ |
+| 其他同类插件 | — | ✅ 自动识别 |
+
+提取文件路径走两条路：优先用返回的 `ui.images`（`filename` + `subfolder` + `output_dir` 拼），其次用 `result` 里的绝对路径（`SaveImageClean` 会把 `FILE_PATH` 直接返回）。两条都不通就跳过，不影响出图。
+
+> 安装时机：`__init__.py` 加载时装一次，`PromptCombiner.run()` 每次执行再补装一次。因为插件加载顺序不保证，装钩子时 `SaveImageClean` 可能还没注册 —— 惰性补装能兜住这种情况。已包装的类会打标，重复调用零开销。
+
 #### 生效条件
 
-1. 重启 ComfyUI（钩子在插件加载时安装）
-2. 正常用 `SaveImage` 出图
-3. 启动日志出现 `[prompt-combiner] 已安装 SaveImage 元数据钩子`
-
-若日志显示 `找不到 ComfyUI 的 nodes.SaveImage`，说明该 ComfyUI 版本结构不同，改用下面的专用节点。
+1. 重启 ComfyUI
+2. 正常用任意保存节点出图
+3. 启动日志或首次出图后出现 `[prompt-combiner] 已安装图片元数据钩子: SaveImage, SaveImageClean`
 
 #### 写入内容
 
 | 键 | 来源 | 说明 |
 |---|---|---|
 | `anima_prompt` | 钩子 | 最近一次抽签输出，纯文本 |
+| `anima_note` | 登记节点 | 备注（模型名 / 版本 / 实验编号），没填就不写 |
+| `anima_slots` | 登记节点 | 结构化标签 JSON，没接就不写 |
 | `workflow` / `prompt` | 原生 | 完全保留，其他工具读取方式不变 |
 
 实现要点：
 
-- **字节级插入 chunk，不重编码**。PIL 重新 `save()` 会丢掉 `iCCP` / `pHYs` / `sRGB` 等非文本块，色彩配置可能受影响。这里直接在 `IEND` 前插 `iTXt`，像素零改动（实测对比逐像素一致，文件只增加 67 字节）。
+- **字节级插入 chunk，不重编码**。PIL 重新 `save()` 会丢掉 `iCCP` / `pHYs` / `sRGB` 等非文本块，色彩配置可能受影响。这里直接在 `IEND` 前插 `iTXt`，像素零改动（实测逐像素一致，文件只增加 67 字节）。
 - **幂等**：同名键已存在就跳过，重复保存不会塞多个。
 - **时效 300 秒**：超过 5 分钟的旧记录不会写进新图，避免串味。
 - **只写 `type == "output"`**：`PreviewImage` 的临时文件不碰。
+- **非 PNG 跳过**：只处理 `.png`，webp / jpg 不改。
 
 #### 关闭钩子
 
-启动前设环境变量 `ANIMA_META_HOOK=0`。适合不想让插件碰图片文件的时候。
+启动前设环境变量 `ANIMA_META_HOOK=0`。
 
-#### 并发说明
+#### 可选：✍️ 写入提示词元数据
 
-钩子取的是「进程内最近一次输出」，**并发跑多个工作流时会互相覆盖**。ComfyUI 默认单队列顺序执行，实际不会撞；真要并行，用下面的专用节点，那条路是显式连线，没有共享状态。
-
-#### 可选：专用节点（字段更多）
-
-需要 `note`（模型版本备注）和 `anima_slots`（结构化标签 JSON）时用它：
+一个**不保存图片**的登记节点。它的唯一职责是把提示词（和备注 / 结构化标签）记进进程状态，让后面的保存节点带上。
 
 ```
-🎲 Danbooru 抽签机 ──标签组合结果──┐
-                                    ├─→ 💾 保存图片（含提示词）
-VAE Decode ─────────────────images──┘
+🎲 Danbooru 抽签机 ──标签组合结果──→ ✍️ 写入提示词元数据
+                                            │
+                      （只登记，不存图）      ↓
+VAE Decode ───────────────────images──→ SaveImage / SaveImageClean
 ```
 
 | 参数 | 必填 | 说明 |
 |---|---|---|
-| `images` | ✅ | 要保存的图片 |
 | `prompt_text` | ✅ | 接抽签机的「标签组合结果」 |
-| `filename_prefix` | ✅ | 默认 `Anima` |
-| `note` | ⬜ | 备注，写进 `anima_note`。建议填模型名/版本/实验编号 |
+| `note` | ⬜ | 备注，写进 `anima_note` |
 | `tags_json` | ⬜ | 结构化标签 JSON，写进 `anima_slots` |
+| `write_log` | ⬜ | 额外追加一行到 `output/_anima_prompts.jsonl`，默认关 |
 
-| 键 | 内容 |
-|---|---|
-| `anima_prompt` | 完整提示词（纯文本） |
-| `anima_note` | 你填的备注 |
-| `anima_slots` | 结构化标签表（JSON） |
-| `prompt` / `workflow` | 保留原生行为 |
+输出透传 `prompt_text`（STRING），可以继续接别的节点。
 
-它输出透传 `IMAGE`，可以直接替换原生 `SaveImage`，后面照常接。
+**什么时候需要它**：
+
+- 想给图片附上模型版本备注（`note`）或结构化标签（`tags_json`）
+- 想同时留一份 JSONL 日志方便批量检索
+- 工作流里有多套抽签机，想明确指定「这次用哪一组」
+
+**什么时候不需要**：只想在 PNG 里看到提示词，钩子已经自动做了。
 
 #### 怎么查看
 
@@ -467,6 +479,11 @@ for f in os.listdir("output"):
 ```
 
 XnView MP、Honeyview 这类看图软件也能直接看到 PNG 文本块。
+
+#### 并发说明
+
+钩子取的是「进程内最近一次登记」，**并发跑多个工作流时会互相覆盖**。ComfyUI 默认单队列顺序执行，实际不会撞。
+
 
 ## 七、后续添加词库的方法与注意事项
 
@@ -629,7 +646,8 @@ print("新词在不在:", "my_char_(my_series)" in [w["prompt"] for w in pool.sl
 comfyui-prompt-combiner/
 ├── __init__.py              # 插件入口：注册节点、挂载 HTTP 路由、声明前端目录
 ├── nodes.py                 # 节点定义（PromptCombiner / PromptCombinerInfo）
-├── save_node.py             # 保存节点：把提示词写进 PNG 元数据（独立文件，加载失败不影响主节点）
+├── save_node.py             # 提示词元数据：登记节点 + 保存后置钩子（独立文件，加载失败不影响主节点）
+├── state.py                 # 进程级暂存：记录最近一次提示词/备注/结构化标签（300 秒时效）
 ├── core.py                  # 核心引擎：数据加载、池构建、抽词、跨槽协调、格式化
 ├── server.py                # 面板用的 HTTP API（/pc/preview、/pc/slotpool 等）
 ├── js/
