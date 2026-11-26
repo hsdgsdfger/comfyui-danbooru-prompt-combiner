@@ -130,6 +130,124 @@ class PromptCombinerSaveImage:
         return {"ui": {"images": results}, "result": (images,)}
 
 
+# ---------------------------------------------------------------- SaveImage 钩子
+#
+# 用途：让**原生 SaveImage** 在保存图片后自动补写提示词，用户工作流一行都不用改。
+#
+# 为什么不是「节点只写元数据」：ComfyUI 节点之间只传 tensor，拿不到图片路径；
+# PNG 的元数据又是文件结构的一部分，必须在写文件时或之后重写。
+# 所以只能在 SaveImage 保存完之后，就地往文件里插 chunk。
+#
+# 为什么用字节插入而不是 PIL 重存：PIL 重新 save 会丢掉 iCCP / pHYs / sRGB
+# 等非文本 chunk，色彩配置可能受影响。这里直接在 IEND 前插 iTXt，像素零改动。
+
+try:
+    from . import state as _state
+except ImportError:
+    try:
+        import state as _state
+    except Exception:
+        _state = None
+
+
+def _png_find_text(data: bytes, key: str) -> bool:
+    return key.encode("latin-1") in data
+
+
+def _png_insert_itxt(data: bytes, key: str, value: str) -> bytes:
+    """在 IEND 之前插入一个 iTXt chunk（UTF-8，支持中文）。"""
+    import struct
+    import zlib
+
+    # iTXt 结构：keyword\0 compression_flag compression_method language\0 translated\0 text
+    payload = (key.encode("latin-1") + b"\x00"
+               + b"\x00" + b"\x00"          # 未压缩
+               + b"\x00"                     # language tag 空
+               + b"\x00"                     # translated keyword 空
+               + value.encode("utf-8"))
+    chunk = (struct.pack(">I", len(payload)) + b"iTXt" + payload
+             + struct.pack(">I", zlib.crc32(b"iTXt" + payload) & 0xFFFFFFFF))
+
+    pos = data.rfind(b"IEND")
+    if pos < 4:
+        raise ValueError("不是合法 PNG（找不到 IEND）")
+    pos -= 4                                 # IEND 前的长度字段
+    return data[:pos] + chunk + data[pos:]
+
+
+def inject_meta(path, text, key="anima_prompt"):
+    """把提示词写进已保存的 PNG。已存在同名键则跳过（幂等）。"""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return False                     # 非 PNG 跳过
+        if _png_find_text(data, key):
+            return True
+        out = _png_insert_itxt(data, key, text)
+        with open(path, "wb") as f:
+            f.write(out)
+        return True
+    except Exception as e:
+        print(f"[prompt-combiner] 写元数据失败 {os.path.basename(str(path))}: {e}")
+        return False
+
+
+_HOOKED = False
+
+
+def install_saveimage_hook():
+    """包装 ComfyUI 原生的 SaveImage.save_images，保存后自动补写提示词。
+
+    开关：环境变量 `ANIMA_META_HOOK=0` 可关闭。
+    只在 `self.type == "output"` 时写，避免污染 PreviewImage 的临时文件。
+    """
+    global _HOOKED
+    if _HOOKED:
+        return True
+    if os.environ.get("ANIMA_META_HOOK", "1") == "0":
+        print("[prompt-combiner] ANIMA_META_HOOK=0，图片元数据钩子已关闭")
+        return False
+
+    import sys as _sys
+    mod = _sys.modules.get("nodes")          # ComfyUI 自己的 nodes 模块
+    if mod is None or not hasattr(mod, "SaveImage"):
+        print("[prompt-combiner] 找不到 ComfyUI 的 nodes.SaveImage，元数据钩子未安装")
+        return False
+    if getattr(mod.SaveImage, "_anima_hooked", False):
+        _HOOKED = True
+        return True
+
+    orig = mod.SaveImage.save_images
+
+    def patched(self, images, filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None):
+        res = orig(self, images, filename_prefix, prompt, extra_pnginfo)
+        try:
+            if _state is None or getattr(self, "type", "output") != "output":
+                return res
+            text = _state.recent()
+            if not text:
+                return res
+            base = getattr(self, "output_dir", ".") or "."
+            for item in (res.get("ui") or {}).get("images") or []:
+                fn = item.get("filename")
+                if not fn:
+                    continue
+                p = os.path.join(base, item.get("subfolder") or "", fn)
+                if os.path.exists(p):
+                    inject_meta(p, text)
+        except Exception as e:
+            # 写元数据失败绝不能影响出图
+            print("[prompt-combiner] 元数据钩子异常:", e)
+        return res
+
+    mod.SaveImage.save_images = patched
+    mod.SaveImage._anima_hooked = True
+    _HOOKED = True
+    print("[prompt-combiner] 已安装 SaveImage 元数据钩子（提示词会自动写进 PNG）")
+    return True
+
+
 # ---------------------------------------------------------------- 自测
 # 直接跑：python save_node.py
 # 生成一张小图，写入中英文混合元数据，再读回来验证。

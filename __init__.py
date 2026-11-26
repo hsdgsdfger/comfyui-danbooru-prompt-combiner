@@ -30,6 +30,17 @@ try:
     NODE_DISPLAY_NAME_MAPPINGS = dict(NODE_DISPLAY_NAME_MAPPINGS)
     NODE_CLASS_MAPPINGS["PromptCombinerSaveImage"] = PromptCombinerSaveImage
     NODE_DISPLAY_NAME_MAPPINGS["PromptCombinerSaveImage"] = "💾 保存图片（含提示词）"
+
+    # 安装钩子：让**原生 SaveImage** 保存后自动补写提示词。
+    # 装不上只打日志，不影响出图。
+    try:
+        try:
+            from .save_node import install_saveimage_hook
+        except ImportError:
+            from save_node import install_saveimage_hook
+        install_saveimage_hook()
+    except Exception as _he:
+        print("[prompt-combiner] 元数据钩子安装失败（不影响出图）:", _he)
 except Exception as _e:
     print("[prompt-combiner] 保存节点加载失败（不影响抽签机）:", _e)
 

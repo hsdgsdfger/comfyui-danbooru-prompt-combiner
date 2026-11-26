@@ -21,6 +21,16 @@ try:
 except Exception:
     from core import GENDER_MAP
 
+# 运行时状态：把本次输出暂存，供 SaveImage 钩子写进图片元数据。
+# 导入失败不影响出图（顶多图片不带提示词）。
+try:
+    from . import state as _state
+except ImportError:
+    try:
+        import state as _state
+    except Exception:
+        _state = None
+
 
 def _is_nonperson_word(word):
     """角色词是不是非人（含「非人池额外补的那批」：宝可梦/数码宝贝/吉祥物）。"""
@@ -202,6 +212,8 @@ class PromptCombiner:
         #   （内容可能是用户手改的，跟 seed 推不出来）。
         _pinned = str(pinned_prompt or "").strip()
         if _pinned:
+            if _state is not None:
+                _state.remember(_pinned)
             return (_pinned,)
 
         db = Data.get()
@@ -273,6 +285,9 @@ class PromptCombiner:
             print("[prompt-combiner] seed 归属记录跳过:", _e)
 
         positive = fmt_prompt(picked, quality, space_out, anima_mode)
+        # 记下本次实际输出 —— SaveImage 钩子保存图片时从这里取
+        if _state is not None:
+            _state.remember(positive)
         # 负向词仍算好（面板/内部要用,默认 WAI精简），但**不再输出**
         negative = R["NEGATIVE_PROMPT_WAI"] if neg_mode == "WAI精简" else R["NEGATIVE_PROMPT_FULL"]
         _ = negative
@@ -290,7 +305,7 @@ class PromptCombiner:
            而 seed 往往没变（翻历史 / 手改一个词）—— 不加就会一直吐缓存，
            表现成「翻了历史点运行还是老样子」，比不修还糟。
         """
-        keys = ("preset", "gender", "nsfw_filter", "nsfw_only", "add_quality", "space_out",
+        keys = ("preset", "gender", "nsfw_filter", "add_quality", "space_out",
                 "neg_mode", "show_detail", "slots_json", "series", "locked_json",
                 "auto_copyright", "auto_boost", "anima_mode", "cross_series",
                 "pinned_prompt")

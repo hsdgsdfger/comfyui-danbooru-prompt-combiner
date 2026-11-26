@@ -378,68 +378,95 @@ git clone https://github.com/hsdgsdfger/comfyui-danbooru-prompt-combiner.git com
 
 ### 6.5 把提示词写进图片（排查用）
 
-原生 `SaveImage` 只把 **workflow 的静态参数**写进 PNG，里面没有「这次实际抽出了哪些标签」——因为抽签结果是运行时生成的字符串，不在 `widgets_values` 里。想出事后回溯，只能拿 seed 重跑一遍。
+原生 `SaveImage` 只把 **workflow 的静态参数**写进 PNG，里面没有「这次实际抽出了哪些标签」，因为抽签结果是运行时生成的字符串，不在 `widgets_values` 里。想出事后回溯，只能拿 seed 重跑一遍。
 
-`💾 保存图片（含提示词）` 节点解决这个问题：把实际输出一并写进 PNG 的元数据。
+本插件用一个**钩子**解决：抽签机每跑一次就把输出暂存，`SaveImage` 保存完图片后自动往 PNG 里插一个 `anima_prompt` 文本块。
 
-**接线方式**
+**默认就是开着的，工作流一行都不用改。**
+
+#### 生效条件
+
+1. 重启 ComfyUI（钩子在插件加载时安装）
+2. 正常用 `SaveImage` 出图
+3. 启动日志出现 `[prompt-combiner] 已安装 SaveImage 元数据钩子`
+
+若日志显示 `找不到 ComfyUI 的 nodes.SaveImage`，说明该 ComfyUI 版本结构不同，改用下面的专用节点。
+
+#### 写入内容
+
+| 键 | 来源 | 说明 |
+|---|---|---|
+| `anima_prompt` | 钩子 | 最近一次抽签输出，纯文本 |
+| `workflow` / `prompt` | 原生 | 完全保留，其他工具读取方式不变 |
+
+实现要点：
+
+- **字节级插入 chunk，不重编码**。PIL 重新 `save()` 会丢掉 `iCCP` / `pHYs` / `sRGB` 等非文本块，色彩配置可能受影响。这里直接在 `IEND` 前插 `iTXt`，像素零改动（实测对比逐像素一致，文件只增加 67 字节）。
+- **幂等**：同名键已存在就跳过，重复保存不会塞多个。
+- **时效 300 秒**：超过 5 分钟的旧记录不会写进新图，避免串味。
+- **只写 `type == "output"`**：`PreviewImage` 的临时文件不碰。
+
+#### 关闭钩子
+
+启动前设环境变量 `ANIMA_META_HOOK=0`。适合不想让插件碰图片文件的时候。
+
+#### 并发说明
+
+钩子取的是「进程内最近一次输出」，**并发跑多个工作流时会互相覆盖**。ComfyUI 默认单队列顺序执行，实际不会撞；真要并行，用下面的专用节点，那条路是显式连线，没有共享状态。
+
+#### 可选：专用节点（字段更多）
+
+需要 `note`（模型版本备注）和 `anima_slots`（结构化标签 JSON）时用它：
 
 ```
 🎲 Danbooru 抽签机 ──标签组合结果──┐
-                                  ├─→ 💾 保存图片（含提示词）──images──→ 后续
-VAE Decode ──────────────────images┘
+                                    ├─→ 💾 保存图片（含提示词）
+VAE Decode ─────────────────images──┘
 ```
-
-用它替换原来的 `SaveImage` 即可，输出仍然是 `IMAGE`，可以继续往下接。
-
-**输入参数**
 
 | 参数 | 必填 | 说明 |
 |---|---|---|
 | `images` | ✅ | 要保存的图片 |
 | `prompt_text` | ✅ | 接抽签机的「标签组合结果」 |
-| `filename_prefix` | ✅ | 文件名前缀，默认 `Anima` |
-| `note` | ⬜ | 备注，写进 `anima_note`。建议填模型名/版本号/实验编号 |
-| `tags_json` | ⬜ | 结构化标签 JSON，写进 `anima_slots`，方便程序解析 |
-
-**写入的元数据键**
+| `filename_prefix` | ✅ | 默认 `Anima` |
+| `note` | ⬜ | 备注，写进 `anima_note`。建议填模型名/版本/实验编号 |
+| `tags_json` | ⬜ | 结构化标签 JSON，写进 `anima_slots` |
 
 | 键 | 内容 |
 |---|---|
 | `anima_prompt` | 完整提示词（纯文本） |
 | `anima_note` | 你填的备注 |
 | `anima_slots` | 结构化标签表（JSON） |
-| `prompt` / `workflow` | 保留原生行为，其他工具照常能读 |
+| `prompt` / `workflow` | 保留原生行为 |
 
-含中文时自动改用 iTXt（UTF-8）chunk，不会因编码报错。
+它输出透传 `IMAGE`，可以直接替换原生 `SaveImage`，后面照常接。
 
-**怎么查看**
+#### 怎么查看
 
 Windows 资源管理器的「属性 → 详细信息」不显示 PNG 自定义元数据，用下面任一方式：
 
 ```bash
-# 方式 1：exiftool（推荐，能列出全部 chunk）
+# 1. exiftool（推荐，能列出全部 chunk）
 exiftool 图片.png
 
-# 方式 2：Python 一行
+# 2. Python 一行
 python -c "from PIL import Image;im=Image.open(r'图片.png');print(im.text.get('anima_prompt'))"
 ```
 
 ```python
-# 方式 3：批量导出某个文件夹所有图片的提示词
+# 3. 批量导出某个文件夹所有图片的提示词
 import os
 from PIL import Image
 
-for f in os.listdir(r"output"):
+for f in os.listdir("output"):
     if f.lower().endswith(".png"):
         im = Image.open(os.path.join("output", f))
-        print(f"\n=== {f} ===")
-        print(im.text.get("anima_prompt", "(无)"))
+        print(f"
+=== {f} ===
+{im.text.get('anima_prompt', '(无)')}")
 ```
 
-XnView MP、Honeyview 这类看图软件也能直接看到 PNG 的文本块。
-
----
+XnView MP、Honeyview 这类看图软件也能直接看到 PNG 文本块。
 
 ## 七、后续添加词库的方法与注意事项
 
