@@ -23,9 +23,9 @@ except ImportError:      # 兼容「把插件目录塞进 sys.path 后直接 imp
 # 加载失败只打日志，绝不拖垮主节点。
 try:
     try:
-        from .save_node import PromptCombinerMetaWriter, install_save_hooks
+        from .save_node import PromptCombinerMetaWriter, install_save_hooks, schedule_hook_install
     except ImportError:
-        from save_node import PromptCombinerMetaWriter, install_save_hooks
+        from save_node import PromptCombinerMetaWriter, install_save_hooks, schedule_hook_install
     NODE_CLASS_MAPPINGS = dict(NODE_CLASS_MAPPINGS)
     NODE_DISPLAY_NAME_MAPPINGS = dict(NODE_DISPLAY_NAME_MAPPINGS)
     NODE_CLASS_MAPPINGS["PromptCombinerMetaWriter"] = PromptCombinerMetaWriter
@@ -34,10 +34,13 @@ try:
     # 该类已不再保存图片，行为与上面的登记节点一致。
     NODE_CLASS_MAPPINGS["PromptCombinerSaveImage"] = PromptCombinerMetaWriter
 
-    # 首次尝试安装钩子。这里可能还有别的插件没加载完，
-    # nodes.py 的 run() 里每次执行都会再调一次（幂等），确保覆盖全。
+    # 装钩子：
+    #   ① 立刻试一次（能装多少算多少）
+    #   ② 后台循环重试到注册表稳定（ComfyUI 是逐个 import 插件的，
+    #      此刻 SaveImageClean 之类的节点很可能还没注册）
     try:
-        install_save_hooks(verbose=True)
+        install_save_hooks(verbose=False)
+        schedule_hook_install()
     except Exception as _he:
         print("[prompt-combiner] 元数据钩子安装失败（不影响出图）:", _he)
 except Exception as _e:

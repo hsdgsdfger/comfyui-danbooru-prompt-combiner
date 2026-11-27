@@ -73,7 +73,7 @@ kneehighs, standing, hand on hip, ...
 |---|---|---|
 | `PromptCombiner` | 🎲 Danbooru 抽签机 | 主节点，输出一条拼好的提示词 |
 | `PromptCombinerInfo` | ℹ️ 词库状态 | 只读，显示词库规模与槽位统计 |
-| `PromptCombinerMetaWriter` | ✍️ 写入提示词元数据 | **不保存图片**，只登记提示词；保存节点落盘后由钩子写进 PNG，用于事后排查 |
+| `PromptCombinerMetaWriter` | ✍️ 写入提示词元数据 | **不保存图片**。接住保存节点的 `FILE_PATH` 就直接写进 PNG 元数据；不接则只登记，等钩子补写 |
 
 ### 3.2 主节点参数（18 项）
 
@@ -396,7 +396,11 @@ git clone https://github.com/hsdgsdfger/comfyui-danbooru-prompt-combiner.git com
 
 提取文件路径走两条路：优先用返回的 `ui.images`（`filename` + `subfolder` + `output_dir` 拼），其次用 `result` 里的绝对路径（`SaveImageClean` 会把 `FILE_PATH` 直接返回）。两条都不通就跳过，不影响出图。
 
-> 安装时机：`__init__.py` 加载时装一次，`PromptCombiner.run()` 每次执行再补装一次。因为插件加载顺序不保证，装钩子时 `SaveImageClean` 可能还没注册 —— 惰性补装能兜住这种情况。已包装的类会打标，重复调用零开销。
+> 安装时机（这里踩过坑，务必看完）：ComfyUI 是**逐个 import** `custom_nodes` 的。实测本机启动日志，钩子在 `11:11:38` 装好，而 `comfyui-save-image-organized` 到 `11:11:43` 才加载完 —— 结果 `SaveImageClean` 全程没被包装，元数据一个都没写进去。
+>
+> 现在的做法：`__init__.py` 先试一次，再起一个后台线程每 2 秒重试，连续 3 轮没有新增才收工（最多 90 秒）。启动日志最后会出现 `[prompt-combiner] 图片元数据钩子就绪: ...`，以那行为准。
+>
+> **但钩子终究是隐式的。想要确定性，用下面的显式接线。**
 
 #### 生效条件
 
@@ -425,33 +429,44 @@ git clone https://github.com/hsdgsdfger/comfyui-danbooru-prompt-combiner.git com
 
 启动前设环境变量 `ANIMA_META_HOOK=0`。
 
-#### 可选：✍️ 写入提示词元数据
+#### 推荐：✍️ 写入提示词元数据（显式接线）
 
-一个**不保存图片**的登记节点。它的唯一职责是把提示词（和备注 / 结构化标签）记进进程状态，让后面的保存节点带上。
+一个**不保存图片**的节点，直接往指定 PNG 里写元数据。不依赖钩子、不看加载顺序、写完当场能看到结果。
 
 ```
-🎲 Danbooru 抽签机 ──标签组合结果──→ ✍️ 写入提示词元数据
-                                            │
-                      （只登记，不存图）      ↓
-VAE Decode ───────────────────images──→ SaveImage / SaveImageClean
+VAE Decode ────────────────images──→ SaveImageClean ──FILE_PATH──→ ✍️ 写入提示词元数据
+                                          ↑                              ↑
+                                     先落盘出图                    🎲 抽签机.标签组合结果
 ```
+
+**关键是那根从 `SaveImageClean` 第二个输出（`FILE_PATH`）接到 `file_path` 的线**。`SaveImageClean` 会返回文件的绝对路径，节点拿到路径后直接改文件 —— 这是全流程里唯一确定的事实，不靠猜。
 
 | 参数 | 必填 | 说明 |
 |---|---|---|
 | `prompt_text` | ✅ | 接抽签机的「标签组合结果」 |
+| `file_path` | ⬜ | 接保存节点的 `FILE_PATH`。**填了就直接写这个文件**；留空则退回钩子那条路 |
 | `note` | ⬜ | 备注，写进 `anima_note` |
 | `tags_json` | ⬜ | 结构化标签 JSON，写进 `anima_slots` |
 | `write_log` | ⬜ | 额外追加一行到 `output/_anima_prompts.jsonl`，默认关 |
 
+`file_path` 支持三种形态：
+
+| 传什么 | 行为 |
+|---|---|
+| PNG 绝对路径 | 写这一张 |
+| 目录绝对路径 | 写该目录下所有 PNG（不递归） |
+| 非 PNG / 不存在 | 节点上显示 `[失败] 具体原因`，控制台同步打印 |
+
+节点执行完会在自己身上显示写入结果（`已写入 1/1 个文件`），不用去翻日志。
+
 输出透传 `prompt_text`（STRING），可以继续接别的节点。
 
-**什么时候需要它**：
+> 原生 `SaveImage` 没有 `FILE_PATH` 输出，只能走钩子那条路，或者用下面的取巧办法：
+> 在 `filename_prefix` 里填绝对路径（如 `D:\out\myimg`），保存后从 `ui.images` 能推出来。
 
-- 想给图片附上模型版本备注（`note`）或结构化标签（`tags_json`）
-- 想同时留一份 JSONL 日志方便批量检索
-- 工作流里有多套抽签机，想明确指定「这次用哪一组」
+#### 什么时候不需要这个节点
 
-**什么时候不需要**：只想在 PNG 里看到提示词，钩子已经自动做了。
+只想在 PNG 里看到提示词、又懒得接线 —— 钩子已经自动做了。但它依赖上面说的重试机制，遇到新插件不保证 100% 覆盖。
 
 #### 怎么查看
 
